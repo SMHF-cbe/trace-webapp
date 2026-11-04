@@ -1,0 +1,26 @@
+{
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/", "destination": "/index.html" },
+    { "source": "/add-store", "destination": "/add-store.html" },
+    { "source": "/admin", "destination": "/admin.html" },
+    { "source": "/admin-dashboard", "destination": "/admin-dashboard.html" },
+    { "source": "/admin-edit-entry", "destination": "/admin-edit-entry.html" },
+    { "source": "/admin-login", "destination": "/admin-login.html" },
+    { "source": "/admin-reports", "destination": "/admin-reports.html" },
+    { "source": "/admin-route-edit", "destination": "/admin-route-edit.html" },
+    { "source": "/admin-routes", "destination": "/admin-routes.html" },
+    { "source": "/admin-store-edit", "destination": "/admin-store-edit.html" },
+    { "source": "/entry", "destination": "/entry.html" },
+    { "source": "/import", "destination": "/import.html" },
+    { "source": "/ledger", "destination": "/ledger.html" },
+    { "source": "/login", "destination": "/login.html" },
+    { "source": "/staff", "destination": "/staff.html" },
+    { "source": "/store-info", "destination": "/store-info.html" },
+    { "source": "/tabs/report", "destination": "/tabs/report.html" },
+    { "source": "/tabs/stores", "destination": "/tabs/stores.html" },
+    { "source": "/:path*", "destination": "/index.html" }
+  ]
+}

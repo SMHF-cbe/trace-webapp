@@ -1,0 +1,22 @@
+{
+  "routes": [
+    { "path": "/", "title": "TRACE — Home" },
+    { "path": "/add-store", "title": "Add Store" },
+    { "path": "/admin", "title": "Admin" },
+    { "path": "/admin-dashboard", "title": "Admin Dashboard" },
+    { "path": "/admin-edit-entry", "title": "Edit Entry" },
+    { "path": "/admin-login", "title": "Admin Login" },
+    { "path": "/admin-reports", "title": "Admin Reports" },
+    { "path": "/admin-route-edit", "title": "Edit Route" },
+    { "path": "/admin-routes", "title": "Admin Routes" },
+    { "path": "/admin-store-edit", "title": "Edit Store" },
+    { "path": "/entry", "title": "Entry" },
+    { "path": "/import", "title": "Import Stores" },
+    { "path": "/ledger", "title": "Ledger" },
+    { "path": "/login", "title": "Login" },
+    { "path": "/staff", "title": "Staff" },
+    { "path": "/store-info", "title": "Store Info" },
+    { "path": "/tabs/report", "title": "Report" },
+    { "path": "/tabs/stores", "title": "Stores" }
+  ]
+}

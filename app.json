@@ -1,0 +1,62 @@
+{
+  "expo": {
+    "name": "route_sync",
+    "slug": "route-sync",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "routesync",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "com.routesync.app",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "com.routesync.app",
+      "usesCleartextTraffic": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#1c2333",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Route Sync uses your location to save accurate store map links."
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#1c2333",
+          "dark": {
+            "backgroundColor": "#12161f"
+          }
+        }
+      ],
+      "@react-native-community/datetimepicker"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
