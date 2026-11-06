@@ -14,11 +14,12 @@ import { COLORS } from "../constants/colors";
 import { API_BASE } from "../constants/config";
 import { screenStyles } from "../constants/screenStyles";
 import { Screen } from "../components/Screen";
+import { DraggableStoreList } from "../components/DraggableStoreList";
 import { useAdminAuth, adminSecretHeaders } from "../context/AdminAuthContext";
 
 type RouteRow = { id: number; route_code: number; name: string };
 
-type StoreRow = { id: number; name: string; price: number; is_active: boolean };
+type StoreRow = { id: number; name: string; price: number; is_active: boolean; sort_order?: number };
 
 function normalizeRouteRow(r: { id: number; name: string; route_code?: number | null }): RouteRow {
   const id = Number(r.id);
@@ -34,6 +35,7 @@ export default function AdminRoutesScreen() {
   const [expandedRouteId, setExpandedRouteId] = useState<number | null>(null);
   const [expandedStores, setExpandedStores] = useState<StoreRow[]>([]);
   const [storesLoading, setStoresLoading] = useState(false);
+  const [storesSaving, setStoresSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!adminSecret) {
@@ -92,6 +94,36 @@ export default function AdminRoutesScreen() {
       void loadStoresForRoute(item.id);
     },
     [expandedRouteId, loadStoresForRoute]
+  );
+
+  const reorderStores = useCallback(
+    async (nextStores: StoreRow[]) => {
+      if (!adminSecret || expandedRouteId == null) return;
+      const previous = expandedStores;
+      setExpandedStores(nextStores);
+      setStoresSaving(true);
+      try {
+        const res = await fetch(`${API_BASE}/admin/stores/reorder`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...adminSecretHeaders(adminSecret) },
+          body: JSON.stringify({
+            route_id: expandedRouteId,
+            stores: nextStores.map((store, index) => ({ id: store.id, sort_order: index })),
+          }),
+        });
+        if (!res.ok) {
+          const detail = await res.json().catch(() => ({}));
+          setExpandedStores(previous);
+          Alert.alert("Could not reorder", typeof detail.detail === "string" ? detail.detail : "Try again.");
+        }
+      } catch {
+        setExpandedStores(previous);
+        Alert.alert("Could not reorder", "Network problem. The previous order was restored.");
+      } finally {
+        setStoresSaving(false);
+      }
+    },
+    [adminSecret, expandedRouteId, expandedStores]
   );
 
   useFocusEffect(
@@ -225,30 +257,17 @@ export default function AdminRoutesScreen() {
                         <Text style={styles.storesEmpty}>No stores on this route yet.</Text>
                       ) : (
                         <>
-                          <Text style={styles.storesCaption}>
-                            {expandedStores.length} store(s) — tap a row for full admin edit
-                          </Text>
-                          {expandedStores.map((s) => (
-                            <TouchableOpacity
-                              key={s.id}
-                              onPress={() =>
-                                router.push({
-                                  pathname: "/admin-store-edit",
-                                  params: { store_id: String(s.id), route_id: String(item.id) },
-                                })
-                              }
-                              style={styles.storeRow}
-                            >
-                              <View style={{ flex: 1 }}>
-                                <Text style={styles.storeName}>{s.name}</Text>
-                                <Text style={styles.storeMeta}>
-                                  ₹{s.price}/unit
-                                  {!s.is_active ? " · inactive" : ""}
-                                </Text>
-                              </View>
-                              <Text style={{ color: COLORS.primary, fontWeight: "700" }}>Edit</Text>
-                            </TouchableOpacity>
-                          ))}
+                          <DraggableStoreList
+                            stores={expandedStores}
+                            saving={storesSaving}
+                            onReorder={reorderStores}
+                            onOpenStore={(s) =>
+                              router.push({
+                                pathname: "/admin-store-edit",
+                                params: { store_id: String(s.id), route_id: String(item.id) },
+                              })
+                            }
+                          />
                         </>
                       )}
                       <TouchableOpacity
@@ -302,34 +321,9 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
   },
-  storesCaption: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-    marginBottom: 10,
-  },
   storesEmpty: {
     color: COLORS.textDisabled,
     fontSize: 14,
     marginBottom: 8,
-  },
-  storeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: COLORS.section,
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  storeName: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: COLORS.textPrimary,
-  },
-  storeMeta: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginTop: 4,
   },
 });
