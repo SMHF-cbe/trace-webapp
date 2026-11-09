@@ -1,181 +1,218 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
-  FlatList,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
-  RefreshControl,
-  StyleSheet,
+  Alert,
+  FlatList,
+  Platform,
 } from "react-native";
-import { useRouter, useFocusEffect } from "expo-router";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
+import { useRouter } from "expo-router";
+import { Screen } from "../components/Screen";
 import { COLORS } from "../constants/colors";
 import { API_BASE } from "../constants/config";
 import { screenStyles } from "../constants/screenStyles";
-import { Screen } from "../components/Screen";
-import { DraggableStoreList } from "../components/DraggableStoreList";
 import { useAdminAuth, adminSecretHeaders } from "../context/AdminAuthContext";
+import DatePickerField from "../components/DatePickerField";
+import AdminDashboard from "../components/AdminDashboard";
 
-type RouteRow = { id: number; route_code: number; name: string };
+type RouteRow = { id: number; route_code?: number | null; name: string };
+type StoreReportRow = {
+  store_id: number;
+  store_name: string;
+  route_id: number;
+  route_code?: number | null;
+  route_name: string;
+  delivered: number;
+  returned: number;
+  collected: number;
+  balance: number;
+};
 
-type StoreRow = { id: number; name: string; price: number; is_active: boolean; sort_order?: number };
+type RangeReport = {
+  from_date: string;
+  to_date: string;
+  route: { id: number; route_code?: number | null; name: string } | null;
+  summary: {
+    total_delivered: number;
+    total_returns: number;
+    cash: number;
+    upi: number;
+    total_collected: number;
+    total_balance: number;
+  };
+  stores: StoreReportRow[];
+};
 
-function normalizeRouteRow(r: { id: number; name: string; route_code?: number | null }): RouteRow {
-  const id = Number(r.id);
-  const code = r.route_code != null && !Number.isNaN(Number(r.route_code)) ? Number(r.route_code) : id;
-  return { id, route_code: code, name: String(r.name ?? "") };
+function ymd(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
 
-export default function AdminRoutesScreen() {
-  const router = useRouter();
-  const { adminSecret, isAdmin, ready } = useAdminAuth();
-  const [routes, setRoutes] = useState<RouteRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedRouteId, setExpandedRouteId] = useState<number | null>(null);
-  const [expandedStores, setExpandedStores] = useState<StoreRow[]>([]);
-  const [storesLoading, setStoresLoading] = useState(false);
-  const [storesSaving, setStoresSaving] = useState(false);
+function isYmd(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
 
-  const load = useCallback(async () => {
-    if (!adminSecret) {
-      setRoutes([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
+function b64FromArrayBuffer(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]!);
+  return globalThis.btoa(binary);
+}
+
+type Tab = "dashboard" | "master";
+
+export default function AdminReportsScreen() {
+  const router = useRouter();
+  const { ready, isAdmin, adminSecret } = useAdminAuth();
+  const [tab, setTab] = useState<Tab>("dashboard");
+
+  const [fromDateObj, setFromDateObj] = useState(
+    () => new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+  );
+  const [toDateObj, setToDateObj] = useState(() => new Date());
+
+  const fromDate = ymd(fromDateObj);
+  const toDate = ymd(toDateObj);
+  const [routeId, setRouteId] = useState<string>("");
+  const [routes, setRoutes] = useState<RouteRow[]>([]);
+  const [loadingRoutes, setLoadingRoutes] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [report, setReport] = useState<RangeReport | null>(null);
+
+  const routeOptions = useMemo(() => [{ id: "", name: "All routes" }, ...routes], [routes]);
+
+  useEffect(() => {
+    if (ready && !isAdmin) router.replace("/admin-login");
+  }, [ready, isAdmin, router]);
+
+  const loadRoutes = useCallback(async () => {
+    if (!adminSecret) return;
+    setLoadingRoutes(true);
     try {
       const res = await fetch(`${API_BASE}/admin/routes`, {
         headers: adminSecretHeaders(adminSecret),
         cache: "no-store",
       });
-      if (!res.ok) {
-        setRoutes([]);
-        return;
-      }
-      const data = await res.json();
-      setRoutes(
-        Array.isArray(data)
-          ? data.map((row: { id: number; name: string; route_code?: number | null }) => normalizeRouteRow(row))
-          : []
-      );
+      const data = await res.json().catch(() => []);
+      setRoutes(Array.isArray(data) ? data : []);
     } catch {
       setRoutes([]);
     } finally {
-      setLoading(false);
+      setLoadingRoutes(false);
     }
   }, [adminSecret]);
 
-  const loadStoresForRoute = useCallback(async (internalRouteId: number) => {
-    setStoresLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/stores/${internalRouteId}?include_inactive=true`, { cache: "no-store" });
-      if (!res.ok) {
-        setExpandedStores([]);
-        return;
-      }
-      const data = await res.json();
-      setExpandedStores(Array.isArray(data) ? data : []);
-    } catch {
-      setExpandedStores([]);
-    } finally {
-      setStoresLoading(false);
+  useEffect(() => {
+    if (ready && isAdmin) void loadRoutes();
+  }, [ready, isAdmin, loadRoutes]);
+
+  const validateRange = (): boolean => {
+    if (!isYmd(fromDate) || !isYmd(toDate)) {
+      Alert.alert("Invalid date", "Use YYYY-MM-DD format for both dates.");
+      return false;
     }
-  }, []);
+    if (toDate < fromDate) {
+      Alert.alert("Invalid range", "To date must be the same or after From date.");
+      return false;
+    }
+    return true;
+  };
 
-  const toggleStores = useCallback(
-    (item: RouteRow) => {
-      if (expandedRouteId === item.id) {
-        setExpandedRouteId(null);
-        setExpandedStores([]);
+  const buildUrl = (suffix: "range" | "range/pdf" | "range/csv"): string => {
+    const params = new URLSearchParams({ from_date: fromDate, to_date: toDate });
+    if (routeId) params.set("route_id", routeId);
+    return `${API_BASE}/admin/report/${suffix}?${params.toString()}`;
+  };
+
+  const fetchReport = useCallback(async () => {
+    if (!adminSecret || !validateRange()) return;
+    setLoading(true);
+    try {
+      const res = await fetch(buildUrl("range"), { headers: adminSecretHeaders(adminSecret) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        Alert.alert("Report error", typeof data.detail === "string" ? data.detail : "Could not load report");
         return;
       }
-      setExpandedRouteId(item.id);
-      void loadStoresForRoute(item.id);
-    },
-    [expandedRouteId, loadStoresForRoute]
-  );
+      setReport(data as RangeReport);
+    } catch {
+      Alert.alert("Error", "Network problem while loading report.");
+    } finally {
+      setLoading(false);
+    }
+  }, [adminSecret, fromDate, toDate, routeId]);
 
-  const reorderStores = useCallback(
-    async (nextStores: StoreRow[]) => {
-      if (!adminSecret || expandedRouteId == null) return;
-      const previous = expandedStores;
-      setExpandedStores(nextStores);
-      setStoresSaving(true);
+  const downloadFile = useCallback(
+    async (kind: "pdf" | "csv") => {
+      if (!adminSecret || !validateRange()) return;
+      setExporting(true);
       try {
-        const res = await fetch(`${API_BASE}/admin/stores/reorder`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", ...adminSecretHeaders(adminSecret) },
-          body: JSON.stringify({
-            route_id: expandedRouteId,
-            stores: nextStores.map((store, index) => ({ id: store.id, sort_order: index })),
-          }),
+        const endpoint = kind === "pdf" ? "range/pdf" : "range/csv";
+        const res = await fetch(buildUrl(endpoint as "range/pdf" | "range/csv"), {
+          headers: adminSecretHeaders(adminSecret),
         });
         if (!res.ok) {
-          const detail = await res.json().catch(() => ({}));
-          setExpandedStores(previous);
-          Alert.alert("Could not reorder", typeof detail.detail === "string" ? detail.detail : "Try again.");
+          const j = await res.json().catch(() => ({}));
+          Alert.alert("Export error", typeof j.detail === "string" ? j.detail : `Could not export ${kind.toUpperCase()}`);
+          return;
+        }
+
+        const routeLabel = routeId || "all";
+        const filename = `admin-report-${routeLabel}-${fromDate}-to-${toDate}.${kind}`;
+
+        if (Platform.OS === "web") {
+          const blob =
+            kind === "pdf"
+              ? new Blob([await res.arrayBuffer()], { type: "application/pdf" })
+              : new Blob([await res.text()], { type: "text/csv;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 1500);
+          return;
+        }
+
+        const base = FileSystem.documentDirectory ?? FileSystem.cacheDirectory ?? "";
+        if (!base) {
+          Alert.alert("Export", "Storage is not available on this device.");
+          return;
+        }
+        const path = `${base}${filename}`;
+
+        if (kind === "pdf") {
+          const bytes = await res.arrayBuffer();
+          const b64 = b64FromArrayBuffer(bytes);
+          await FileSystem.writeAsStringAsync(path, b64, { encoding: FileSystem.EncodingType.Base64 });
+        } else {
+          const csvText = await res.text();
+          await FileSystem.writeAsStringAsync(path, csvText);
+        }
+
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(path, {
+            mimeType: kind === "pdf" ? "application/pdf" : "text/csv",
+            dialogTitle: `Share ${kind.toUpperCase()} report`,
+            UTI: kind === "pdf" ? "com.adobe.pdf" : "public.comma-separated-values-text",
+          });
+        } else {
+          Alert.alert("Saved", `File saved to:\n${path}`);
         }
       } catch {
-        setExpandedStores(previous);
-        Alert.alert("Could not reorder", "Network problem. The previous order was restored.");
+        Alert.alert("Error", `Could not export ${kind.toUpperCase()}.`);
       } finally {
-        setStoresSaving(false);
+        setExporting(false);
       }
     },
-    [adminSecret, expandedRouteId, expandedStores]
+    [adminSecret, fromDate, toDate, routeId]
   );
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!ready) return;
-      if (!isAdmin) {
-        router.replace("/admin-login");
-        return;
-      }
-      void load();
-    }, [ready, isAdmin, load, router])
-  );
-
-  useFocusEffect(
-    useCallback(() => {
-      if (expandedRouteId != null) void loadStoresForRoute(expandedRouteId);
-    }, [expandedRouteId, loadStoresForRoute])
-  );
-
-  const removeRoute = (item: RouteRow) => {
-    Alert.alert(
-      "Delete route?",
-      `Remove "${item.name}" and all its stores and entries? This cannot be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const res = await fetch(`${API_BASE}/admin/routes/${item.id}`, {
-                method: "DELETE",
-                headers: adminSecretHeaders(adminSecret),
-              });
-              if (!res.ok) {
-                const j = await res.json().catch(() => ({}));
-                Alert.alert("Error", typeof j.detail === "string" ? j.detail : "Could not delete");
-                return;
-              }
-              if (expandedRouteId === item.id) {
-                setExpandedRouteId(null);
-                setExpandedStores([]);
-              }
-              await load();
-            } catch {
-              Alert.alert("Error", "Network problem");
-            }
-          },
-        },
-      ]
-    );
-  };
 
   if (!ready || !isAdmin) {
     return (
@@ -187,143 +224,192 @@ export default function AdminRoutesScreen() {
     );
   }
 
-  return (
-    <Screen edges={["top", "right", "left", "bottom"]}>
-      <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 8 }}>
-        <TouchableOpacity onPress={() => router.back()} accessibilityRole="button">
-          <Text style={screenStyles.backLink}>← Back</Text>
-        </TouchableOpacity>
-
-        <Text style={screenStyles.title}>Manage routes</Text>
-        <Text style={[screenStyles.subtitle, { marginBottom: 12 }]}>
-          Tap a route name to list stores (edit offers, price, delete). Use Edit for route ID, name, or PIN.
+  const tabBtn = (label: string, key: Tab) => {
+    const active = tab === key;
+    return (
+      <TouchableOpacity
+        onPress={() => setTab(key)}
+        style={{
+          flex: 1,
+          paddingVertical: 12,
+          alignItems: "center",
+          borderBottomWidth: 3,
+          borderBottomColor: active ? COLORS.primary : "transparent",
+        }}
+      >
+        <Text
+          style={{
+            color: active ? "#FFFFFF" : COLORS.textDisabled,
+            fontWeight: active ? "700" : "500",
+            fontSize: 15,
+          }}
+        >
+          {label}
         </Text>
+      </TouchableOpacity>
+    );
+  };
 
-        {loading ? (
-          <ActivityIndicator color={COLORS.primary} style={{ marginTop: 24 }} />
-        ) : (
-          <FlatList
-            data={routes}
-            keyExtractor={(r) => String(r.id)}
-            refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={COLORS.primary} />}
-            contentContainerStyle={{ paddingBottom: 32 }}
-            ListEmptyComponent={
-              <Text style={{ color: COLORS.textSecondary, marginTop: 16 }}>No routes yet.</Text>
-            }
-            renderItem={({ item }) => {
-              const open = expandedRouteId === item.id;
-              return (
-                <View style={[screenStyles.card, styles.routeCard]}>
-                  <View style={styles.routeHeaderRow}>
-                    <TouchableOpacity
-                      onPress={() => toggleStores(item)}
-                      activeOpacity={0.75}
-                      style={styles.routeNameTap}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${open ? "Hide" : "Show"} stores for route ${item.name}`}
-                    >
-                      <Text style={styles.routeTitle}>
-                        Route {item.route_code ?? item.id} – {item.name}
-                      </Text>
-                      <Text style={styles.routeTapHint}>
-                        {open ? "▲ Hide stores" : "▼ Tap for stores · add · CRUD"}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() =>
-                        router.push({
-                          pathname: "/admin-route-edit",
-                          params: {
-                            route_id: String(item.id),
-                            route_code: String(item.route_code ?? item.id),
-                            name: item.name,
-                          },
-                        })
-                      }
-                      style={{ paddingVertical: 8, paddingHorizontal: 10, marginRight: 2 }}
-                    >
-                      <Text style={{ color: COLORS.primary, fontWeight: "700" }}>Edit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => removeRoute(item)} style={{ paddingVertical: 8, paddingHorizontal: 6 }}>
-                      <Text style={{ color: COLORS.error, fontWeight: "700" }}>Delete</Text>
-                    </TouchableOpacity>
-                  </View>
+  return (
+    <Screen scroll keyboard edges={["top", "right", "left", "bottom"]}>
+      <TouchableOpacity onPress={() => router.back()} accessibilityRole="button">
+        <Text style={screenStyles.backLink}>← Back</Text>
+      </TouchableOpacity>
 
-                  {open ? (
-                    <View style={styles.storesBlock}>
-                      {storesLoading ? (
-                        <ActivityIndicator color={COLORS.primary} style={{ marginVertical: 12 }} />
-                      ) : expandedStores.length === 0 ? (
-                        <Text style={styles.storesEmpty}>No stores on this route yet.</Text>
-                      ) : (
-                        <>
-                          <DraggableStoreList
-                            stores={expandedStores}
-                            saving={storesSaving}
-                            onReorder={reorderStores}
-                            onOpenStore={(s) =>
-                              router.push({
-                                pathname: "/admin-store-edit",
-                                params: { store_id: String(s.id), route_id: String(item.id) },
-                              })
-                            }
-                          />
-                        </>
-                      )}
-                      <TouchableOpacity
-                        onPress={() =>
-                          router.push({ pathname: "/add-store", params: { route_id: String(item.id) } })
-                        }
-                        style={[screenStyles.secondaryBtn, { marginTop: 8 }]}
-                      >
-                        <Text style={screenStyles.secondaryBtnText}>Add store</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                </View>
-              );
-            }}
-          />
-        )}
+      <Text style={screenStyles.title}>Reports</Text>
+
+      {/* Tab bar */}
+      <View
+        style={{
+          flexDirection: "row",
+          marginBottom: 16,
+          borderBottomWidth: 1,
+          borderBottomColor: "rgba(255,255,255,0.1)",
+        }}
+      >
+        {tabBtn("Dashboard", "dashboard")}
+        {tabBtn("Master Report", "master")}
       </View>
+
+      {/* ============ DASHBOARD TAB ============ */}
+      {tab === "dashboard" && adminSecret && (
+        <AdminDashboard adminSecret={adminSecret} routes={routes} />
+      )}
+
+      {/* ============ MASTER REPORT TAB ============ */}
+      {tab === "master" && (
+        <>
+          <Text style={[screenStyles.subtitle, { marginBottom: 14 }]}>
+            Filter by route and date range, then export PDF/CSV.
+          </Text>
+
+          <DatePickerField
+            label="From date"
+            value={fromDateObj}
+            onChange={setFromDateObj}
+            disabled={loading || exporting}
+          />
+
+          <DatePickerField
+            label="To date"
+            value={toDateObj}
+            onChange={setToDateObj}
+            disabled={loading || exporting}
+          />
+
+          <Text style={{ color: COLORS.textSecondary, marginBottom: 8, fontSize: 13, fontWeight: "600" }}>
+            Route filter {loadingRoutes ? "(loading...)" : ""}
+          </Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 14 }}>
+            {routeOptions.map((r) => {
+              const id = String((r as any).id ?? "");
+              const selected = routeId === id;
+              const chipLabel =
+                id === "" ? "All routes" : `R${(r as any).route_code ?? (r as any).id} ${(r as any).name}`;
+              return (
+                <TouchableOpacity
+                  key={id || "all-routes"}
+                  onPress={() => setRouteId(id)}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 10,
+                    borderRadius: 10,
+                    backgroundColor: selected ? COLORS.primary : COLORS.surface,
+                    marginRight: 6,
+                    marginBottom: 6,
+                    borderWidth: 1,
+                    borderColor: selected ? COLORS.primary : "rgba(255,255,255,0.12)",
+                  }}
+                >
+                  <Text style={{ color: selected ? "#FFF" : COLORS.textDisabled, fontWeight: "600", fontSize: 12 }}>
+                    {chipLabel}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <TouchableOpacity
+            onPress={() => void fetchReport()}
+            disabled={loading || exporting}
+            style={[screenStyles.primaryBtn, (loading || exporting) && { opacity: 0.75 }]}
+          >
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={screenStyles.primaryBtnText}>Generate report</Text>
+            )}
+          </TouchableOpacity>
+
+          <View style={{ flexDirection: "row", marginTop: 10 }}>
+            <TouchableOpacity
+              onPress={() => void downloadFile("pdf")}
+              disabled={loading || exporting}
+              style={[screenStyles.secondaryBtn, { flex: 1, marginRight: 6 }, (loading || exporting) && { opacity: 0.75 }]}
+            >
+              <Text style={screenStyles.secondaryBtnText}>Export PDF</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => void downloadFile("csv")}
+              disabled={loading || exporting}
+              style={[screenStyles.secondaryBtn, { flex: 1, marginLeft: 6 }, (loading || exporting) && { opacity: 0.75 }]}
+            >
+              <Text style={screenStyles.secondaryBtnText}>Export CSV</Text>
+            </TouchableOpacity>
+          </View>
+
+          {report ? (
+            <>
+              <View style={[screenStyles.card, { marginTop: 14 }]}>
+                <Text style={[screenStyles.sectionLabel, { marginBottom: 8 }]}>Summary</Text>
+                <Text style={{ color: COLORS.textSecondary, marginBottom: 6 }}>
+                  Range: {report.from_date} to {report.to_date}
+                </Text>
+                <Text style={{ color: COLORS.textPrimary, marginBottom: 4 }}>
+                  Delivered: {report.summary.total_delivered}
+                </Text>
+                <Text style={{ color: COLORS.textPrimary, marginBottom: 4 }}>
+                  Returns: {report.summary.total_returns}
+                </Text>
+                <Text style={{ color: COLORS.textPrimary, marginBottom: 4 }}>
+                  Cash: ₹{Number(report.summary.cash).toFixed(2)}
+                </Text>
+                <Text style={{ color: COLORS.textPrimary, marginBottom: 4 }}>
+                  UPI: ₹{Number(report.summary.upi).toFixed(2)}
+                </Text>
+                <Text style={{ color: COLORS.textPrimary, marginBottom: 4 }}>
+                  Total collected: ₹{Number(report.summary.total_collected).toFixed(2)}
+                </Text>
+                <Text style={{ color: COLORS.textPrimary }}>
+                  Balance: ₹{Number(report.summary.total_balance).toFixed(2)}
+                </Text>
+              </View>
+
+              <Text style={[screenStyles.sectionLabel, { marginTop: 12, marginBottom: 8 }]}>
+                Stores ({report.stores.length})
+              </Text>
+              <FlatList
+                data={report.stores}
+                keyExtractor={(item) => String(item.store_id)}
+                scrollEnabled={false}
+                renderItem={({ item }) => (
+                  <View style={[screenStyles.card, { marginBottom: 8, padding: 12 }]}>
+                    <Text style={{ color: COLORS.textPrimary, fontWeight: "700" }}>{item.store_name}</Text>
+                    <Text style={{ color: COLORS.textSecondary, marginTop: 4 }}>
+                      Route: {item.route_code != null ? `R${item.route_code}` : `ID ${item.route_id}`} -{" "}
+                      {item.route_name}
+                    </Text>
+                    <Text style={{ color: COLORS.textSecondary, marginTop: 2 }}>
+                      Del {item.delivered} · Ret {item.returned} · Col ₹{Number(item.collected).toFixed(2)} · Bal ₹
+                      {Number(item.balance).toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+              />
+            </>
+          ) : null}
+        </>
+      )}
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  routeCard: {
-    marginBottom: 10,
-    padding: 14,
-  },
-  routeHeaderRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-  },
-  routeNameTap: {
-    flex: 1,
-    marginRight: 4,
-    minWidth: 0,
-  },
-  routeTitle: {
-    color: COLORS.textPrimary,
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  routeTapHint: {
-    color: COLORS.primary,
-    fontSize: 12,
-    fontWeight: "600",
-    marginTop: 6,
-  },
-  storesBlock: {
-    marginTop: 14,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-  },
-  storesEmpty: {
-    color: COLORS.textDisabled,
-    fontSize: 14,
-    marginBottom: 8,
-  },
-});
