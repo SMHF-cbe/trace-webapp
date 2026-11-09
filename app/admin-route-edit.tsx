@@ -14,6 +14,7 @@ import { COLORS } from "../constants/colors";
 import { API_BASE } from "../constants/config";
 import { screenStyles, placeholderColor } from "../constants/screenStyles";
 import { Screen } from "../components/Screen";
+import { DraggableStoreList } from "../components/DraggableStoreList";
 import { useAdminAuth, adminSecretHeaders } from "../context/AdminAuthContext";
 import { ROUTE_PIN_REGEX, sanitizeRoutePinDigits } from "../constants/routePassword";
 
@@ -30,9 +31,10 @@ export default function AdminRouteEditScreen() {
   const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [storesOpen, setStoresOpen] = useState(false);
-  type StoreRow = { id: number; name: string; price: number; is_active: boolean };
+  type StoreRow = { id: number; name: string; price: number; is_active: boolean; sort_order?: number };
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [storesLoading, setStoresLoading] = useState(false);
+  const [storesSaving, setStoresSaving] = useState(false);
 
   useEffect(() => {
     if (ready && !isAdmin) router.replace("/admin-login");
@@ -70,6 +72,36 @@ export default function AdminRouteEditScreen() {
       return next;
     });
   }, [loadStores]);
+
+  const reorderStores = useCallback(
+    async (nextStores: StoreRow[]) => {
+      if (!adminSecret) return;
+      const previous = stores;
+      setStores(nextStores);
+      setStoresSaving(true);
+      try {
+        const res = await fetch(`${API_BASE}/admin/stores/reorder`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...adminSecretHeaders(adminSecret) },
+          body: JSON.stringify({
+            route_id: rid,
+            stores: nextStores.map((store, index) => ({ id: store.id, sort_order: index })),
+          }),
+        });
+        if (!res.ok) {
+          const detail = await res.json().catch(() => ({}));
+          setStores(previous);
+          Alert.alert("Could not reorder", typeof detail.detail === "string" ? detail.detail : "Try again.");
+        }
+      } catch {
+        setStores(previous);
+        Alert.alert("Could not reorder", "Network problem. The previous order was restored.");
+      } finally {
+        setStoresSaving(false);
+      }
+    },
+    [adminSecret, rid, stores]
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -203,27 +235,17 @@ export default function AdminRouteEditScreen() {
               No stores yet. Use Add store or Import from the admin menu.
             </Text>
           ) : (
-            stores.map((item) => (
-              <TouchableOpacity
-                key={item.id}
-                onPress={() =>
-                  router.push({
-                    pathname: "/admin-store-edit",
-                    params: { store_id: String(item.id), route_id: String(rid) },
-                  })
-                }
-                style={styles.storeRow}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.storeName}>{item.name}</Text>
-                  <Text style={styles.storeMeta}>
-                    ₹{item.price}/unit
-                    {!item.is_active ? " · inactive" : ""}
-                  </Text>
-                </View>
-                <Text style={{ color: COLORS.primary, fontWeight: "700" }}>Edit</Text>
-              </TouchableOpacity>
-            ))
+            <DraggableStoreList
+              stores={stores}
+              saving={storesSaving}
+              onReorder={reorderStores}
+              onOpenStore={(item) =>
+                router.push({
+                  pathname: "/admin-store-edit",
+                  params: { store_id: String(item.id), route_id: String(rid) },
+                })
+              }
+            />
           )}
           <TouchableOpacity
             onPress={() =>
@@ -277,25 +299,5 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
-  },
-  storeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: COLORS.card,
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  storeName: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: COLORS.textPrimary,
-  },
-  storeMeta: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginTop: 4,
   },
 });
