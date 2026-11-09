@@ -6,7 +6,9 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
-  StyleSheet,
+  Switch,
+  ScrollView,
+  Keyboard,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -14,156 +16,248 @@ import { COLORS } from "../constants/colors";
 import { API_BASE } from "../constants/config";
 import { screenStyles, placeholderColor } from "../constants/screenStyles";
 import { Screen } from "../components/Screen";
-import { DraggableStoreList } from "../components/DraggableStoreList";
 import { useAdminAuth, adminSecretHeaders } from "../context/AdminAuthContext";
-import { ROUTE_PIN_REGEX, sanitizeRoutePinDigits } from "../constants/routePassword";
+import DatePickerField from "../components/DatePickerField";
 
-export default function AdminRouteEditScreen() {
+type RouteItem = { id: number; route_code: number | null; name: string };
+
+type EntryRow = {
+  id: number;
+  date: string | null;
+  created_at: string | null;
+  store_id: number;
+  store_name: string;
+  route_id: number;
+  route_code: number | null;
+  route_name: string;
+  delivered: number;
+  returned: number;
+  total_amount: number;
+  collected_cash: number;
+  collected_upi: number;
+  amount_collected: number;
+  balance: number;
+  payment_mode: string | null;
+  upi_received: boolean;
+  is_closed: boolean;
+};
+
+type StoreItem = { id: number; name: string };
+
+export default function AdminEditEntryScreen() {
   const router = useRouter();
-  const { route_id, route_code, name } = useLocalSearchParams<{
-    route_id?: string;
-    route_code?: string;
-    name?: string;
-  }>();
+  const params = useLocalSearchParams<{ entry_id?: string }>();
   const { adminSecret, isAdmin, ready } = useAdminAuth();
-  const [routeCodeStr, setRouteCodeStr] = useState(String(route_code ?? ""));
-  const [routeName, setRouteName] = useState(String(name ?? ""));
-  const [newPassword, setNewPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [storesOpen, setStoresOpen] = useState(false);
-  type StoreRow = { id: number; name: string; price: number; is_active: boolean; sort_order?: number };
-  const [stores, setStores] = useState<StoreRow[]>([]);
-  const [storesLoading, setStoresLoading] = useState(false);
-  const [storesSaving, setStoresSaving] = useState(false);
+
+  const [routes, setRoutes] = useState<RouteItem[]>([]);
+  const [selectedRoute, setSelectedRoute] = useState<number | null>(null);
+  const [stores, setStores] = useState<StoreItem[]>([]);
+  const [selectedStore, setSelectedStore] = useState<number | null>(null);
+  const [searchDateObj, setSearchDateObj] = useState(() => new Date());
+  const searchDate = searchDateObj.toISOString().slice(0, 10);
+  const [entries, setEntries] = useState<EntryRow[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+
+  const [editEntry, setEditEntry] = useState<EntryRow | null>(null);
+  const [delivered, setDelivered] = useState("");
+  const [returned, setReturned] = useState("");
+  const [cashAmount, setCashAmount] = useState("");
+  const [upiAmount, setUpiAmount] = useState("");
+  const [upiReceived, setUpiReceived] = useState(false);
+  const [markClosed, setMarkClosed] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  type AuditRow = {
+    id: number;
+    field: string;
+    old_value: string;
+    new_value: string;
+    edited_by: string;
+    edited_at: string | null;
+  };
+  const [auditLog, setAuditLog] = useState<AuditRow[]>([]);
 
   useEffect(() => {
     if (ready && !isAdmin) router.replace("/admin-login");
   }, [ready, isAdmin, router]);
 
-  useEffect(() => {
-    setRouteCodeStr(String(route_code ?? ""));
-    setRouteName(String(name ?? ""));
-  }, [route_code, name]);
-
-  const rid = Number(route_id);
-
-  const loadStores = useCallback(async () => {
-    if (!route_id || Number.isNaN(rid) || rid <= 0) return;
-    setStoresLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/stores/${rid}?include_inactive=true`, { cache: "no-store" });
-      if (!res.ok) {
-        setStores([]);
-        return;
-      }
-      const data = await res.json();
-      setStores(Array.isArray(data) ? data : []);
-    } catch {
-      setStores([]);
-    } finally {
-      setStoresLoading(false);
-    }
-  }, [route_id, rid]);
-
-  const toggleStoresPanel = useCallback(() => {
-    setStoresOpen((prev) => {
-      const next = !prev;
-      if (next) void loadStores();
-      return next;
-    });
-  }, [loadStores]);
-
-  const reorderStores = useCallback(
-    async (nextStores: StoreRow[]) => {
-      if (!adminSecret) return;
-      const previous = stores;
-      setStores(nextStores);
-      setStoresSaving(true);
-      try {
-        const res = await fetch(`${API_BASE}/admin/stores/reorder`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", ...adminSecretHeaders(adminSecret) },
-          body: JSON.stringify({
-            route_id: rid,
-            stores: nextStores.map((store, index) => ({ id: store.id, sort_order: index })),
-          }),
-        });
-        if (!res.ok) {
-          const detail = await res.json().catch(() => ({}));
-          setStores(previous);
-          Alert.alert("Could not reorder", typeof detail.detail === "string" ? detail.detail : "Try again.");
-        }
-      } catch {
-        setStores(previous);
-        Alert.alert("Could not reorder", "Network problem. The previous order was restored.");
-      } finally {
-        setStoresSaving(false);
-      }
-    },
-    [adminSecret, rid, stores]
-  );
-
   useFocusEffect(
     useCallback(() => {
-      if (storesOpen) void loadStores();
-    }, [storesOpen, loadStores])
+      if (!ready || !isAdmin || !adminSecret) return;
+      fetch(`${API_BASE}/admin/routes`, {
+        headers: adminSecretHeaders(adminSecret),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (Array.isArray(data)) setRoutes(data);
+        })
+        .catch(() => {});
+    }, [ready, isAdmin, adminSecret])
   );
-  if (!route_id || Number.isNaN(rid) || rid <= 0) {
-    return (
-      <Screen edges={["top", "right", "left", "bottom"]}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={screenStyles.backLink}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={{ color: COLORS.textSecondary, marginTop: 24 }}>Missing route.</Text>
-      </Screen>
-    );
-  }
 
-  const save = async () => {
+  useEffect(() => {
+    if (selectedRoute == null) {
+      setStores([]);
+      setSelectedStore(null);
+      return;
+    }
+    fetch(`${API_BASE}/stores/${selectedRoute}?include_inactive=true`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setStores(data.map((s: any) => ({ id: s.id, name: s.name })));
+        }
+      })
+      .catch(() => setStores([]));
+  }, [selectedRoute]);
+
+  useEffect(() => {
+    const raw = Array.isArray(params.entry_id) ? params.entry_id[0] : params.entry_id;
+    const n = Number(raw);
+    if (!Number.isNaN(n) && n > 0 && adminSecret) {
+      fetch(`${API_BASE}/admin/entries/${n}`, {
+        headers: adminSecretHeaders(adminSecret),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data) {
+            setEntries([data]);
+            setHasSearched(true);
+            openEdit(data);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [params.entry_id, adminSecret]);
+
+  const search = async () => {
     if (!adminSecret) return;
-    const codeNum = parseInt(routeCodeStr.trim(), 10);
-    if (Number.isNaN(codeNum) || codeNum < 1) {
-      Alert.alert("Route ID required", "Enter a positive route ID (e.g. 1).");
-      return;
-    }
-    if (!routeName.trim()) {
-      Alert.alert("Name required", "Enter a route name.");
-      return;
-    }
-    if (newPassword.trim() && !ROUTE_PIN_REGEX.test(newPassword)) {
-      Alert.alert(
-        "4-digit PIN required",
-        "New route PIN must be exactly 4 digits (0-9), or leave blank to keep the current PIN."
-      );
-      return;
-    }
-    setBusy(true);
+    setSearching(true);
+    setHasSearched(true);
+    setEditEntry(null);
     try {
-      const body: { route_code: number; name: string; password?: string } = {
-        route_code: codeNum,
-        name: routeName.trim(),
-      };
-      if (newPassword.trim()) body.password = newPassword.trim();
-      const res = await fetch(`${API_BASE}/admin/routes/${rid}`, {
+      const qs = new URLSearchParams();
+      if (selectedRoute != null) qs.set("route_id", String(selectedRoute));
+      if (selectedStore != null) qs.set("store_id", String(selectedStore));
+      if (searchDate.trim()) qs.set("entry_date", searchDate.trim());
+      const res = await fetch(`${API_BASE}/admin/entries?${qs}`, {
+        headers: adminSecretHeaders(adminSecret),
+      });
+      const data = await res.json();
+      setEntries(Array.isArray(data?.entries) ? data.entries : []);
+    } catch {
+      Alert.alert("Error", "Could not load entries.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const openEdit = (row: EntryRow) => {
+    setEditEntry(row);
+    setMarkClosed(row.is_closed);
+    if (row.is_closed) {
+      setDelivered("0");
+      setReturned("0");
+      setCashAmount("0");
+      setUpiAmount("0");
+      setUpiReceived(false);
+    } else {
+      setDelivered(String(row.delivered ?? 0));
+      setReturned(String(row.returned ?? 0));
+      setCashAmount(String(row.collected_cash ?? 0));
+      setUpiAmount(String(row.collected_upi ?? 0));
+      setUpiReceived(row.upi_received);
+    }
+    setAuditLog([]);
+    if (adminSecret) {
+      fetch(`${API_BASE}/admin/entries/${row.id}/audit`, {
+        headers: adminSecretHeaders(adminSecret),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data?.audit) setAuditLog(data.audit);
+        })
+        .catch(() => {});
+    }
+  };
+
+  const handleSave = async () => {
+    if (!editEntry || !adminSecret) return;
+    setSaving(true);
+    try {
+      const body: Record<string, unknown> = {};
+      if (markClosed) {
+        body.is_closed = true;
+      } else {
+        body.is_closed = false;
+        body.delivered = Number(delivered) || 0;
+        body.returned = Number(returned) || 0;
+        body.collected_cash = Number(cashAmount) || 0;
+        body.collected_upi = Number(upiAmount) || 0;
+        body.upi_received = upiReceived;
+      }
+      const res = await fetch(`${API_BASE}/admin/entries/${editEntry.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", ...adminSecretHeaders(adminSecret) },
+        headers: {
+          "Content-Type": "application/json",
+          ...adminSecretHeaders(adminSecret),
+        },
         body: JSON.stringify(body),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json();
       if (!res.ok) {
-        const detail = typeof data.detail === "string" ? data.detail : "Try again.";
-        Alert.alert(res.status === 409 ? "Duplicate route ID or name" : "Could not save", detail);
+        Alert.alert("Could not save", typeof data.detail === "string" ? data.detail : "Try again.");
         return;
       }
-      Alert.alert("Saved", "Route updated.");
-      setNewPassword("");
-      router.back();
+      Alert.alert("Saved", "Entry updated successfully.");
+      setEditEntry(null);
+      await search();
     } catch {
       Alert.alert("Error", "Network problem.");
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   };
+
+  const handleDelete = () => {
+    if (!editEntry || !adminSecret) return;
+    Alert.alert(
+      "Delete entry?",
+      `This will permanently remove entry #${editEntry.id} (${editEntry.store_name}, ${editEntry.date}). This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            setSaving(true);
+            try {
+              const res = await fetch(`${API_BASE}/admin/entries/${editEntry.id}`, {
+                method: "DELETE",
+                headers: adminSecretHeaders(adminSecret),
+              });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                Alert.alert("Error", typeof data.detail === "string" ? data.detail : "Could not delete.");
+                return;
+              }
+              Alert.alert("Deleted", "Entry removed.");
+              setEditEntry(null);
+              await search();
+            } catch {
+              Alert.alert("Error", "Network problem.");
+            } finally {
+              setSaving(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const label = { color: COLORS.textSecondary, marginBottom: 6, fontSize: 13, fontWeight: "600" as const };
+  const inputStyle = [screenStyles.input, { marginBottom: 14, backgroundColor: COLORS.card }];
 
   if (!ready || !isAdmin) {
     return (
@@ -175,129 +269,399 @@ export default function AdminRouteEditScreen() {
     );
   }
 
+  if (editEntry) {
+    return (
+      <Screen scroll keyboard edges={["top", "right", "left", "bottom"]}>
+        <TouchableOpacity onPress={() => setEditEntry(null)} accessibilityRole="button">
+          <Text style={screenStyles.backLink}>← Back to results</Text>
+        </TouchableOpacity>
+
+        <Text style={screenStyles.title}>Edit entry</Text>
+        <View style={[screenStyles.card, { marginBottom: 16 }]}>
+          <Text style={{ color: COLORS.textPrimary, fontWeight: "700", fontSize: 16, marginBottom: 4 }}>
+            {editEntry.store_name}
+          </Text>
+          <Text style={{ color: COLORS.textSecondary, fontSize: 13 }}>
+            Entry #{editEntry.id} · {editEntry.date} · Route: {editEntry.route_name}
+          </Text>
+          <Text style={{ color: COLORS.textSecondary, fontSize: 13, marginTop: 2 }}>
+            Original: {editEntry.delivered} del · {editEntry.returned} ret · ₹{editEntry.total_amount.toFixed(0)} bill · ₹{(editEntry.collected_cash + editEntry.collected_upi).toFixed(0)} paid
+          </Text>
+        </View>
+
+        <Text style={screenStyles.sectionLabel}>Status</Text>
+        <View style={{ flexDirection: "row", marginBottom: 16 }}>
+          <TouchableOpacity
+            onPress={() => setMarkClosed(false)}
+            style={{
+              flex: 1,
+              marginRight: 8,
+              paddingVertical: 14,
+              backgroundColor: !markClosed ? COLORS.primary : COLORS.border,
+              borderRadius: 10,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ fontWeight: "600", color: !markClosed ? "#FFFFFF" : COLORS.textPrimary }}>Sale</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setMarkClosed(true)}
+            style={{
+              flex: 1,
+              paddingVertical: 14,
+              backgroundColor: markClosed ? COLORS.error : COLORS.border,
+              borderRadius: 10,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ fontWeight: "600", color: markClosed ? "#FFFFFF" : COLORS.textPrimary }}>Closed</Text>
+          </TouchableOpacity>
+        </View>
+
+        {!markClosed && (
+          <>
+            <Text style={label}>Units delivered</Text>
+            <TextInput
+              value={delivered}
+              onChangeText={setDelivered}
+              placeholder="0"
+              placeholderTextColor={placeholderColor}
+              keyboardType="number-pad"
+              style={inputStyle}
+              editable={!saving}
+            />
+
+            <Text style={label}>Units returned</Text>
+            <TextInput
+              value={returned}
+              onChangeText={setReturned}
+              placeholder="0"
+              placeholderTextColor={placeholderColor}
+              keyboardType="number-pad"
+              style={inputStyle}
+              editable={!saving}
+            />
+
+            <Text style={label}>Cash collected (₹)</Text>
+            <TextInput
+              value={cashAmount}
+              onChangeText={setCashAmount}
+              placeholder="0"
+              placeholderTextColor={placeholderColor}
+              keyboardType="decimal-pad"
+              style={inputStyle}
+              editable={!saving}
+            />
+
+            <View
+              style={{
+                marginBottom: 12,
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                backgroundColor: COLORS.card,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: COLORS.border,
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <Text style={{ color: COLORS.textPrimary, fontSize: 15, fontWeight: "600" }}>UPI received</Text>
+                <Switch
+                  value={upiReceived}
+                  onValueChange={setUpiReceived}
+                  trackColor={{ false: "#767577", true: COLORS.primaryPressed }}
+                  thumbColor={upiReceived ? "#FFFFFF" : "#f4f3f4"}
+                />
+              </View>
+            </View>
+
+            <Text style={label}>UPI collected (₹)</Text>
+            <TextInput
+              value={upiAmount}
+              onChangeText={setUpiAmount}
+              placeholder="0"
+              placeholderTextColor={placeholderColor}
+              keyboardType="decimal-pad"
+              style={inputStyle}
+              editable={!saving}
+            />
+
+            <Text style={{ color: COLORS.textSecondary, fontSize: 13, marginBottom: 14 }}>
+              Total collected: ₹{((Number(cashAmount) || 0) + (Number(upiAmount) || 0)).toFixed(0)}
+            </Text>
+          </>
+        )}
+
+        <TouchableOpacity
+          onPress={handleSave}
+          disabled={saving}
+          style={[screenStyles.primaryBtn, { marginBottom: 10 }, saving && { opacity: 0.6 }]}
+        >
+          {saving ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={screenStyles.primaryBtnText}>Save changes</Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={handleDelete}
+          disabled={saving}
+          style={{ marginTop: 8, padding: 14, alignItems: "center" }}
+        >
+          <Text style={{ color: COLORS.error, fontWeight: "700", fontSize: 16 }}>Delete entry</Text>
+        </TouchableOpacity>
+
+        {auditLog.length > 0 && (
+          <View style={[screenStyles.card, { marginTop: 16, marginBottom: 32 }]}>
+            <Text style={[screenStyles.sectionLabel, { marginBottom: 10 }]}>
+              Edit history ({auditLog.length})
+            </Text>
+            {auditLog.map((row) => {
+              const time = row.edited_at
+                ? new Date(row.edited_at).toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : "—";
+              return (
+                <View
+                  key={row.id}
+                  style={{
+                    paddingVertical: 8,
+                    borderBottomWidth: 1,
+                    borderBottomColor: COLORS.border,
+                  }}
+                >
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }}>
+                    <Text style={{ color: COLORS.textPrimary, fontWeight: "600", fontSize: 13 }}>
+                      {row.field}
+                    </Text>
+                    <Text
+                      style={{
+                        color: row.edited_by === "admin" ? COLORS.warning : COLORS.primary,
+                        fontSize: 11,
+                        fontWeight: "600",
+                      }}
+                    >
+                      {row.edited_by}
+                    </Text>
+                  </View>
+                  <Text style={{ color: COLORS.textSecondary, fontSize: 12 }}>
+                    {row.old_value} → {row.new_value}
+                  </Text>
+                  <Text style={{ color: COLORS.textDisabled, fontSize: 11, marginTop: 2 }}>
+                    {time}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
+        {auditLog.length === 0 && (
+          <Text style={{ color: COLORS.textDisabled, fontSize: 12, textAlign: "center", marginTop: 16, marginBottom: 32 }}>
+            No edit history for this entry.
+          </Text>
+        )}
+      </Screen>
+    );
+  }
+
+  const selectedRouteName = routes.find((r) => r.id === selectedRoute);
+  const selectedStoreName = stores.find((s) => s.id === selectedStore);
+
   return (
     <Screen scroll keyboard edges={["top", "right", "left", "bottom"]}>
       <TouchableOpacity onPress={() => router.back()} accessibilityRole="button">
         <Text style={screenStyles.backLink}>← Back</Text>
       </TouchableOpacity>
 
-      <Text style={screenStyles.title}>Edit route</Text>
-      <Text style={[screenStyles.subtitle, { marginBottom: 16 }]}>Update route ID, name, or PIN.</Text>
-
-      <Text style={{ color: COLORS.textSecondary, marginBottom: 6, fontSize: 13, fontWeight: "600" }}>
-        Route ID (business number)
+      <Text style={screenStyles.title}>Edit sales entries</Text>
+      <Text style={[screenStyles.subtitle, { marginBottom: 12 }]}>
+        Search by route, store, and date, then tap an entry to edit.
       </Text>
-      <TextInput
-        value={routeCodeStr}
-        onChangeText={(t) => setRouteCodeStr(t.replace(/[^\d]/g, ""))}
-        keyboardType="number-pad"
-        placeholder="e.g. 1"
-        placeholderTextColor={placeholderColor}
-        style={[screenStyles.input, { marginBottom: 16, backgroundColor: COLORS.card }]}
-        editable={!busy}
-      />
 
-      <TouchableOpacity
-        onPress={toggleStoresPanel}
-        activeOpacity={0.7}
-        accessibilityRole="button"
-        accessibilityLabel={storesOpen ? "Hide stores on this route" : "Show stores on this route"}
-        style={styles.routeNameLabelRow}
-      >
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: "600" }}>Route name</Text>
-          <Text style={{ color: COLORS.primary, fontSize: 12, marginTop: 4, fontWeight: "600" }}>
-            Tap to {storesOpen ? "hide" : "list"} stores · edit offers, price, photo, delete
+      {/* Route selector */}
+      <Text style={label}>Route</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 12 }}>
+        <TouchableOpacity
+          onPress={() => { setSelectedRoute(null); setSelectedStore(null); }}
+          style={{
+            paddingVertical: 10,
+            paddingHorizontal: 16,
+            borderRadius: 20,
+            backgroundColor: selectedRoute == null ? COLORS.primary : COLORS.card,
+            borderWidth: 1,
+            borderColor: selectedRoute == null ? COLORS.primary : COLORS.border,
+            marginRight: 8,
+            marginBottom: 8,
+          }}
+        >
+          <Text style={{ fontSize: 14, fontWeight: "600", color: selectedRoute == null ? "#FFF" : COLORS.textPrimary }}>
+            All routes
           </Text>
-        </View>
-        <Text style={{ color: COLORS.textSecondary, fontSize: 18, fontWeight: "700" }}>
-          {storesOpen ? "▲" : "▼"}
-        </Text>
-      </TouchableOpacity>
-      <TextInput
-        value={routeName}
-        onChangeText={setRouteName}
-        placeholder="Route name"
-        placeholderTextColor={placeholderColor}
-        style={[screenStyles.input, { marginBottom: storesOpen ? 10 : 16, backgroundColor: COLORS.card }]}
-        editable={!busy}
-      />
-
-      {storesOpen ? (
-        <View style={styles.storesPanel}>
-          <Text style={{ color: COLORS.textDisabled, fontSize: 12, marginBottom: 10 }}>
-            {storesLoading ? "Loading…" : `${stores.length} store(s) — tap a row for full edit`}
-          </Text>
-          {storesLoading ? (
-            <ActivityIndicator color={COLORS.primary} style={{ marginVertical: 16 }} />
-          ) : stores.length === 0 ? (
-            <Text style={{ color: COLORS.textDisabled, marginBottom: 12, fontSize: 14 }}>
-              No stores yet. Use Add store or Import from the admin menu.
-            </Text>
-          ) : (
-            <DraggableStoreList
-              stores={stores}
-              saving={storesSaving}
-              onReorder={reorderStores}
-              onOpenStore={(item) =>
-                router.push({
-                  pathname: "/admin-store-edit",
-                  params: { store_id: String(item.id), route_id: String(rid) },
-                })
-              }
-            />
-          )}
+        </TouchableOpacity>
+        {routes.map((r) => (
           <TouchableOpacity
-            onPress={() =>
-              router.push({ pathname: "/add-store", params: { route_id: String(rid) } })
-            }
-            style={[screenStyles.secondaryBtn, { marginTop: 4 }]}
+            key={r.id}
+            onPress={() => { setSelectedRoute(r.id); setSelectedStore(null); }}
+            style={{
+              paddingVertical: 10,
+              paddingHorizontal: 16,
+              borderRadius: 20,
+              backgroundColor: selectedRoute === r.id ? COLORS.primary : COLORS.card,
+              borderWidth: 1,
+              borderColor: selectedRoute === r.id ? COLORS.primary : COLORS.border,
+              marginRight: 8,
+              marginBottom: 8,
+            }}
           >
-            <Text style={screenStyles.secondaryBtnText}>Add store</Text>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: selectedRoute === r.id ? "#FFF" : COLORS.textPrimary }}>
+              R{r.route_code} – {r.name}
+            </Text>
           </TouchableOpacity>
-        </View>
-      ) : null}
+        ))}
+      </View>
 
-      <Text style={{ color: COLORS.textSecondary, marginBottom: 6, fontSize: 13, fontWeight: "600" }}>
-        New route PIN (optional)
-      </Text>
-      <Text style={{ color: COLORS.textDisabled, fontSize: 12, marginBottom: 6 }}>
-        Leave blank to keep the current PIN. Must be exactly 4 digits if you change it.
-      </Text>
-      <TextInput
-        value={newPassword}
-        onChangeText={(t) => setNewPassword(sanitizeRoutePinDigits(t))}
-        placeholder="e.g. 5910"
-        placeholderTextColor={placeholderColor}
-        keyboardType="number-pad"
-        maxLength={4}
-        style={[screenStyles.input, { marginBottom: 20, backgroundColor: COLORS.card }]}
-        editable={!busy}
+      {/* Store selector — vertical list inside a card */}
+      {selectedRoute != null && stores.length > 0 && (
+        <View style={{ marginBottom: 12 }}>
+          <Text style={label}>Store (optional)</Text>
+          <View
+            style={[
+              screenStyles.card,
+              { padding: 0, maxHeight: 220, overflow: "hidden" },
+            ]}
+          >
+            <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
+              <TouchableOpacity
+                onPress={() => setSelectedStore(null)}
+                style={{
+                  paddingVertical: 13,
+                  paddingHorizontal: 16,
+                  backgroundColor: selectedStore == null ? "rgba(46,204,113,0.12)" : "transparent",
+                  borderBottomWidth: 1,
+                  borderBottomColor: COLORS.border,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <Text style={{ fontSize: 15, fontWeight: selectedStore == null ? "700" : "500", color: COLORS.textPrimary }}>
+                  All stores
+                </Text>
+                {selectedStore == null && (
+                  <Text style={{ color: COLORS.primary, fontSize: 13, fontWeight: "700" }}>✓</Text>
+                )}
+              </TouchableOpacity>
+              {stores.map((s, idx) => (
+                <TouchableOpacity
+                  key={s.id}
+                  onPress={() => setSelectedStore(s.id)}
+                  style={{
+                    paddingVertical: 13,
+                    paddingHorizontal: 16,
+                    backgroundColor: selectedStore === s.id ? "rgba(46,204,113,0.12)" : "transparent",
+                    borderBottomWidth: idx < stores.length - 1 ? 1 : 0,
+                    borderBottomColor: COLORS.border,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 15,
+                      fontWeight: selectedStore === s.id ? "700" : "500",
+                      color: COLORS.textPrimary,
+                      flex: 1,
+                    }}
+                    numberOfLines={1}
+                  >
+                    {s.name}
+                  </Text>
+                  {selectedStore === s.id && (
+                    <Text style={{ color: COLORS.primary, fontSize: 13, fontWeight: "700", marginLeft: 8 }}>✓</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+          {selectedStoreName && (
+            <Text style={{ color: COLORS.primary, fontSize: 12, fontWeight: "600", marginTop: 6 }}>
+              Selected: {selectedStoreName.name}
+            </Text>
+          )}
+        </View>
+      )}
+
+      <DatePickerField
+        label="Date"
+        value={searchDateObj}
+        onChange={setSearchDateObj}
+        disabled={searching}
       />
 
       <TouchableOpacity
-        onPress={save}
-        disabled={busy}
-        style={[screenStyles.primaryBtn, busy && { opacity: 0.75 }]}
+        onPress={() => { Keyboard.dismiss(); search(); }}
+        disabled={searching}
+        style={[screenStyles.primaryBtn, { marginBottom: 16 }, searching && { opacity: 0.6 }]}
       >
-        {busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={screenStyles.primaryBtnText}>Save changes</Text>}
+        {searching ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <Text style={screenStyles.primaryBtnText}>Search entries</Text>
+        )}
       </TouchableOpacity>
+
+      {/* Results */}
+      {hasSearched && entries.length === 0 && (
+        <Text style={{ color: COLORS.textDisabled, textAlign: "center", marginTop: 24, marginBottom: 24 }}>
+          No entries found for the selected filters.
+        </Text>
+      )}
+
+      {hasSearched && entries.length > 0 && (
+        <View style={{ marginBottom: 24 }}>
+          <Text style={[screenStyles.sectionLabel, { marginBottom: 10 }]}>
+            Results ({entries.length})
+          </Text>
+          {entries.map((item) => {
+            const paid = (item.collected_cash + item.collected_upi).toFixed(0);
+            return (
+              <TouchableOpacity
+                key={item.id}
+                onPress={() => openEdit(item)}
+                style={[screenStyles.card, { marginBottom: 10, padding: 14 }]}
+              >
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text style={{ color: COLORS.textPrimary, fontWeight: "700", fontSize: 15, flex: 1 }}>
+                    {item.store_name}
+                  </Text>
+                  <Text style={{ color: COLORS.textDisabled, fontSize: 12 }}>#{item.id}</Text>
+                </View>
+                {item.is_closed ? (
+                  <Text style={{ color: COLORS.error, fontSize: 13, marginTop: 4, fontWeight: "600" }}>
+                    Closed (no sale)
+                  </Text>
+                ) : (
+                  <Text style={{ color: COLORS.textSecondary, fontSize: 13, marginTop: 4 }}>
+                    {item.delivered} del · {item.returned} ret · ₹{item.total_amount.toFixed(0)} bill · ₹{paid} paid · bal ₹{item.balance.toFixed(0)}
+                  </Text>
+                )}
+                <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
+                  <Text style={{ color: COLORS.textDisabled, fontSize: 12 }}>
+                    {item.date} · R{item.route_code ?? item.route_id}
+                  </Text>
+                  <Text style={{ color: COLORS.primary, fontSize: 12, fontWeight: "600" }}>Tap to edit</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  routeNameLabelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-  },
-  storesPanel: {
-    marginBottom: 16,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-});
