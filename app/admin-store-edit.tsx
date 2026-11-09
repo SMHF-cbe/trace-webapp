@@ -4,8 +4,9 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
+  Alert,
+  StyleSheet,
 } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
@@ -44,6 +45,12 @@ type StoreDetail = {
   opening_balance?: number;
 };
 
+type RouteOption = {
+  id: number;
+  route_code: number | null;
+  name: string;
+};
+
 export default function AdminStoreEditScreen() {
   const router = useRouter();
   const { store_id } = useLocalSearchParams<{ store_id?: string; route_id?: string }>();
@@ -64,6 +71,8 @@ export default function AdminStoreEditScreen() {
   const [openingBalance, setOpeningBalance] = useState("");
   const [notes, setNotes] = useState("");
   const [isActive, setIsActive] = useState(true);
+  const [routeId, setRouteId] = useState<number | null>(null);
+  const [routes, setRoutes] = useState<RouteOption[]>([]);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [savedPhotoPath, setSavedPhotoPath] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
@@ -85,6 +94,7 @@ export default function AdminStoreEditScreen() {
       setOpeningBalance(String(s.opening_balance ?? ""));
       setNotes(s.notes ?? "");
       setIsActive(s.is_active !== false);
+      setRouteId(s.route_id == null ? null : Number(s.route_id));
       setSavedPhotoPath(s.photo_url);
       setPhotoUri(null);
   }, []);
@@ -93,21 +103,41 @@ export default function AdminStoreEditScreen() {
     if (!store_id || Number.isNaN(sid) || sid <= 0) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/store/${sid}`, { cache: "no-store" });
-      if (!res.ok) {
+      const [storeRes, routesRes] = await Promise.all([
+        fetch(`${API_BASE}/store/${sid}`, { cache: "no-store" }),
+        adminSecret
+          ? fetch(`${API_BASE}/admin/routes`, {
+              headers: adminSecretHeaders(adminSecret),
+              cache: "no-store",
+            })
+          : Promise.resolve(null),
+      ]);
+      if (!storeRes.ok) {
         Alert.alert("Not found", "Could not load this store.");
         router.back();
         return;
       }
-      const data = (await res.json()) as StoreDetail;
+      const data = (await storeRes.json()) as StoreDetail;
       hydrate(data);
+      if (routesRes?.ok) {
+        const routeData = await routesRes.json();
+        setRoutes(
+          Array.isArray(routeData)
+            ? routeData.map((r: RouteOption) => ({
+                id: Number(r.id),
+                route_code: r.route_code == null ? null : Number(r.route_code),
+                name: String(r.name ?? ""),
+              }))
+            : []
+        );
+      }
     } catch {
       Alert.alert("Error", "Network problem.");
       router.back();
     } finally {
       setLoading(false);
     }
-  }, [store_id, sid, hydrate, router]);
+  }, [store_id, sid, hydrate, router, adminSecret]);
 
   useFocusEffect(
     useCallback(() => {
@@ -195,6 +225,7 @@ export default function AdminStoreEditScreen() {
         opening_balance: Number(openingBalance) || 0,
         is_active: isActive,
         photo_url: photoUrl ?? null,
+        route_id: routeId,
       };
 
       const res = await fetch(`${API_BASE}/store/${sid}`, {
@@ -338,6 +369,36 @@ export default function AdminStoreEditScreen() {
         style={inputStyle}
         editable={!busy}
       />
+
+      <Text style={label}>Route</Text>
+      <Text style={styles.routeHint}>
+        Choose the route where this store should appear.
+      </Text>
+      <View style={styles.routeChoices}>
+        {routes.map((route) => {
+          const selected = routeId === route.id;
+          return (
+            <TouchableOpacity
+              key={route.id}
+              onPress={() => setRouteId(route.id)}
+              disabled={busy}
+              style={[styles.routeChip, selected && styles.routeChipSelected]}
+              accessibilityRole="button"
+              accessibilityLabel={`Move store to Route ${route.route_code ?? route.id}, ${route.name}`}
+            >
+              <Text style={[styles.routeChipCode, selected && styles.routeChipTextSelected]}>
+                R{route.route_code ?? route.id}
+              </Text>
+              <Text
+                numberOfLines={1}
+                style={[styles.routeChipName, selected && styles.routeChipTextSelected]}
+              >
+                {route.name}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
       <Text style={label}>Price per unit (₹)</Text>
       <TextInput
@@ -547,3 +608,49 @@ export default function AdminStoreEditScreen() {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  routeHint: {
+    color: COLORS.textDisabled,
+    fontSize: 12,
+    marginTop: -2,
+    marginBottom: 8,
+  },
+  routeChoices: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginBottom: 14,
+  },
+  routeChip: {
+    maxWidth: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    marginRight: 7,
+    marginBottom: 7,
+  },
+  routeChipSelected: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primary,
+  },
+  routeChipCode: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: "800",
+    marginRight: 6,
+  },
+  routeChipName: {
+    color: COLORS.textPrimary,
+    fontSize: 12,
+    fontWeight: "600",
+    maxWidth: 210,
+  },
+  routeChipTextSelected: {
+    color: "#FFFFFF",
+  },
+});
