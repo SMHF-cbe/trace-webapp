@@ -350,33 +350,36 @@ export default function Stores() {
 
           </View>
 
-          <TouchableOpacity
-
-            onPress={() =>
-
-              router.push({
-
-                pathname: "/add-store",
-
-                params: { route_id },
-
-              })
-
-            }
-
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-
-            accessibilityRole="button"
-
-            accessibilityLabel="Add new store"
-
-            style={{ paddingTop: 2 }}
-
-          >
-
-            <Ionicons name="add-circle-outline" size={32} color={COLORS.primary} />
-
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+            <TouchableOpacity
+              onPress={() =>
+                router.push({
+                  pathname: "/staff-map",
+                  params: { route_id: String(route_id), name: String(routeName) },
+                })
+              }
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Open route map"
+              style={{ paddingTop: 2 }}
+            >
+              <Ionicons name="map-outline" size={29} color={COLORS.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() =>
+                router.push({
+                  pathname: "/add-store",
+                  params: { route_id },
+                })
+              }
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Add new store"
+              style={{ paddingTop: 2 }}
+            >
+              <Ionicons name="add-circle-outline" size={32} color={COLORS.primary} />
+            </TouchableOpacity>
+          </View>
 
         </View>
 
@@ -384,7 +387,7 @@ export default function Stores() {
 
         <Text style={[screenStyles.subtitle, { marginBottom: 10 }]}>
 
-          Tap a row for today&apos;s entry. Use the + icon (top right) to add a store. Info icon opens details and map.
+          Tap a row for today&apos;s entry. Use the map icon to see the ordered route and the + icon to add a store.
 
         </Text>
 
