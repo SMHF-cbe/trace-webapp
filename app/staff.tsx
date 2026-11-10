@@ -61,7 +61,19 @@ export default function StaffRoutesScreen() {
           <Text style={screenStyles.backLink}>← Home</Text>
         </TouchableOpacity>
 
-        <Text style={screenStyles.title}>route_sync</Text>
+        <View style={styles.headingRow}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={screenStyles.title}>route_sync</Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => router.push("/instructions")}
+            style={styles.infoButton}
+            accessibilityRole="button"
+            accessibilityLabel="Open staff instructions in English and Tamil"
+          >
+            <Text style={styles.infoIcon}>ⓘ</Text>
+          </TouchableOpacity>
+        </View>
         <Text style={screenStyles.subtitle}>
           Choose your delivery route, then enter the route password. One person per route.
         </Text>
@@ -136,3 +148,27 @@ export default function StaffRoutesScreen() {
     </Screen>
   );
 }
+
+const styles = {
+  headingRow: {
+    flexDirection: "row" as const,
+    alignItems: "flex-start" as const,
+    justifyContent: "space-between" as const,
+  },
+  infoButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginTop: -2,
+  },
+  infoIcon: {
+    color: COLORS.primary,
+    fontSize: 25,
+    fontWeight: "700" as const,
+  },
+};
