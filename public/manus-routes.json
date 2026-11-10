@@ -16,6 +16,7 @@
     { "path": "/ledger", "title": "Ledger" },
     { "path": "/login", "title": "Login" },
     { "path": "/staff", "title": "Staff" },
+    { "path": "/staff-map", "title": "Staff Route Map" },
     { "path": "/store-info", "title": "Store Info" },
     { "path": "/tabs/report", "title": "Report" },
     { "path": "/tabs/stores", "title": "Stores" }
