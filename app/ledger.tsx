@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Linking,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { COLORS } from "../constants/colors";
@@ -69,6 +70,7 @@ export default function LedgerScreen() {
   const [summary, setSummary] = useState<LedgerSummary | null>(null);
   const [filter, setFilter] = useState<"all" | "today" | "week" | "custom">("all");
   const [loading, setLoading] = useState(true);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   const [customFrom, setCustomFrom] = useState(() => {
     const d = new Date();
@@ -80,6 +82,42 @@ export default function LedgerScreen() {
   function ymd(d: Date): string {
     return d.toISOString().slice(0, 10);
   }
+
+  const getPdfRange = useCallback((): { from?: string; to?: string; label: string } => {
+    const today = new Date();
+    const todayText = ymd(today);
+    if (filter === "today") return { from: todayText, to: todayText, label: "today" };
+    if (filter === "week") {
+      const from = new Date(today);
+      from.setDate(from.getDate() - 7);
+      return { from: ymd(from), to: todayText, label: "the last 7 days" };
+    }
+    if (filter === "custom") {
+      return { from: ymd(customFrom), to: ymd(customTo), label: "the selected dates" };
+    }
+    return { label: "all history" };
+  }, [filter, customFrom, customTo]);
+
+  const downloadBillPdf = useCallback(async () => {
+    if (!store_id || pdfLoading) return;
+    const range = getPdfRange();
+    const params = new URLSearchParams();
+    if (range.from && range.to) {
+      params.set("from_date", range.from);
+      params.set("to_date", range.to);
+    }
+    const query = params.toString();
+    const pdfUrl = `${API_BASE}/ledger/${store_id}/bill.pdf${query ? `?${query}` : ""}`;
+
+    setPdfLoading(true);
+    try {
+      await Linking.openURL(pdfUrl);
+    } catch {
+      Alert.alert("PDF unavailable", "Could not open the bill PDF. Check your connection and try again.");
+    } finally {
+      setPdfLoading(false);
+    }
+  }, [store_id, pdfLoading, getPdfRange]);
 
   const fetchLedger = useCallback(
     async (type: "all" | "today" | "week" | "custom" = "all", from?: Date, to?: Date) => {
@@ -240,6 +278,24 @@ export default function LedgerScreen() {
             />
           </View>
         )}
+
+        <TouchableOpacity
+          onPress={downloadBillPdf}
+          disabled={pdfLoading || loading}
+          style={[
+            screenStyles.secondaryBtn,
+            { marginBottom: 14 },
+            (pdfLoading || loading) && { opacity: 0.6 },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Download bill PDF for the selected date range"
+        >
+          {pdfLoading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={screenStyles.secondaryBtnText}>Download bill PDF</Text>
+          )}
+        </TouchableOpacity>
 
         {loading ? (
           <ActivityIndicator color={COLORS.primary} style={{ marginTop: 24 }} />
