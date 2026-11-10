@@ -12,6 +12,7 @@
     { "path": "/admin-store-edit", "title": "Edit Store" },
     { "path": "/entry", "title": "Entry" },
     { "path": "/import", "title": "Import Stores" },
+    { "path": "/instructions", "title": "Staff Instructions" },
     { "path": "/ledger", "title": "Ledger" },
     { "path": "/login", "title": "Login" },
     { "path": "/staff", "title": "Staff" },
