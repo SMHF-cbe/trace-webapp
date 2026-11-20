@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  PanResponder,
   StyleSheet,
 } from "react-native";
 import { Image } from "expo-image";
@@ -51,6 +52,30 @@ type RouteOption = {
   name: string;
 };
 
+type StoreNav = {
+  id: number;
+  name: string;
+  sort_order?: number;
+};
+
+type FormSnapshot = {
+  name: string;
+  area: string;
+  price: string;
+  offerType: string;
+  buy: string;
+  get: string;
+  minQty: string;
+  bundlePrice: string;
+  locationUrl: string;
+  openingBalance: string;
+  notes: string;
+  isActive: boolean;
+  routeId: number | null;
+  photoUri: string | null;
+  savedPhotoPath: string | null;
+};
+
 export default function AdminStoreEditScreen() {
   const router = useRouter();
   const { store_id } = useLocalSearchParams<{ store_id?: string; route_id?: string }>();
@@ -76,27 +101,88 @@ export default function AdminStoreEditScreen() {
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [savedPhotoPath, setSavedPhotoPath] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
+  const [routeStores, setRouteStores] = useState<StoreNav[]>([]);
+  const [initialSnapshot, setInitialSnapshot] = useState<FormSnapshot | null>(null);
+
+  const currentSnapshot = useMemo<FormSnapshot>(
+    () => ({
+      name,
+      area,
+      price,
+      offerType,
+      buy,
+      get,
+      minQty,
+      bundlePrice,
+      locationUrl,
+      openingBalance,
+      notes,
+      isActive,
+      routeId,
+      photoUri,
+      savedPhotoPath,
+    }),
+    [
+      name,
+      area,
+      price,
+      offerType,
+      buy,
+      get,
+      minQty,
+      bundlePrice,
+      locationUrl,
+      openingBalance,
+      notes,
+      isActive,
+      routeId,
+      photoUri,
+      savedPhotoPath,
+    ]
+  );
+
+  const isDirty =
+    initialSnapshot != null && JSON.stringify(currentSnapshot) !== JSON.stringify(initialSnapshot);
 
   useEffect(() => {
     if (ready && !isAdmin) router.replace("/admin-login");
   }, [ready, isAdmin, router]);
 
   const hydrate = useCallback((s: StoreDetail) => {
-      setName(s.name ?? "");
-      setArea(s.area ?? "");
-      setPrice(String(s.price ?? ""));
-      setOfferType((s.offer_type || "none").toLowerCase());
-      setBuy(String(s.offer_buy ?? ""));
-      setGet(String(s.offer_get ?? ""));
-      setMinQty(String(s.offer_min_qty ?? ""));
-      setBundlePrice(String(s.bundle_price ?? ""));
-      setLocationUrl(s.location_url ?? "");
-      setOpeningBalance(String(s.opening_balance ?? ""));
-      setNotes(s.notes ?? "");
-      setIsActive(s.is_active !== false);
-      setRouteId(s.route_id == null ? null : Number(s.route_id));
-      setSavedPhotoPath(s.photo_url);
+      const nextRouteId = s.route_id == null ? null : Number(s.route_id);
+      const nextSnapshot: FormSnapshot = {
+        name: s.name ?? "",
+        area: s.area ?? "",
+        price: String(s.price ?? ""),
+        offerType: (s.offer_type || "none").toLowerCase(),
+        buy: String(s.offer_buy ?? ""),
+        get: String(s.offer_get ?? ""),
+        minQty: String(s.offer_min_qty ?? ""),
+        bundlePrice: String(s.bundle_price ?? ""),
+        locationUrl: s.location_url ?? "",
+        openingBalance: String(s.opening_balance ?? ""),
+        notes: s.notes ?? "",
+        isActive: s.is_active !== false,
+        routeId: nextRouteId,
+        photoUri: null,
+        savedPhotoPath: s.photo_url,
+      };
+      setName(nextSnapshot.name);
+      setArea(nextSnapshot.area);
+      setPrice(nextSnapshot.price);
+      setOfferType(nextSnapshot.offerType);
+      setBuy(nextSnapshot.buy);
+      setGet(nextSnapshot.get);
+      setMinQty(nextSnapshot.minQty);
+      setBundlePrice(nextSnapshot.bundlePrice);
+      setLocationUrl(nextSnapshot.locationUrl);
+      setOpeningBalance(nextSnapshot.openingBalance);
+      setNotes(nextSnapshot.notes);
+      setIsActive(nextSnapshot.isActive);
+      setRouteId(nextRouteId);
+      setSavedPhotoPath(nextSnapshot.savedPhotoPath);
       setPhotoUri(null);
+      setInitialSnapshot(nextSnapshot);
   }, []);
 
   const load = useCallback(async () => {
@@ -119,6 +205,31 @@ export default function AdminStoreEditScreen() {
       }
       const data = (await storeRes.json()) as StoreDetail;
       hydrate(data);
+      const requestedRouteId = Number(route_id);
+      const navRouteId = requestedRouteId > 0 ? requestedRouteId : Number(data.route_id);
+      if (navRouteId > 0) {
+        const storesRes = await fetch(`${API_BASE}/stores/${navRouteId}?include_inactive=true`, {
+          cache: "no-store",
+        });
+        if (storesRes.ok) {
+          const storesData = await storesRes.json();
+          setRouteStores(
+            Array.isArray(storesData)
+              ? storesData
+                  .map((store: StoreNav) => ({
+                    id: Number(store.id),
+                    name: String(store.name ?? ""),
+                    sort_order: Number(store.sort_order ?? 0),
+                  }))
+                  .sort((a: StoreNav, b: StoreNav) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
+              : []
+          );
+        } else {
+          setRouteStores([]);
+        }
+      } else {
+        setRouteStores([]);
+      }
       if (routesRes?.ok) {
         const routeData = await routesRes.json();
         setRoutes(
@@ -137,12 +248,57 @@ export default function AdminStoreEditScreen() {
     } finally {
       setLoading(false);
     }
-  }, [store_id, sid, hydrate, router, adminSecret]);
+  }, [store_id, route_id, sid, hydrate, router, adminSecret]);
 
   useFocusEffect(
     useCallback(() => {
       if (ready && isAdmin) void load();
     }, [ready, isAdmin, load])
+  );
+
+  const currentIndex = routeStores.findIndex((store) => store.id === sid);
+  const previousStore = currentIndex > 0 ? routeStores[currentIndex - 1] : null;
+  const nextStore = currentIndex >= 0 && currentIndex < routeStores.length - 1 ? routeStores[currentIndex + 1] : null;
+
+  const goToStore = useCallback(
+    (target: StoreNav | null) => {
+      if (!target || busy) return;
+      const openTarget = () =>
+        router.replace({
+          pathname: "/admin-store-edit",
+          params: {
+            store_id: String(target.id),
+            route_id: String(initialSnapshot?.routeId ?? Number(route_id)),
+          },
+        });
+
+      if (isDirty) {
+        Alert.alert(
+          "Unsaved changes",
+          "You have changes that have not been saved. Switch stores and discard them?",
+          [
+            { text: "Stay", style: "cancel" },
+            { text: "Discard and continue", style: "destructive", onPress: openTarget },
+          ]
+        );
+        return;
+      }
+      openTarget();
+    },
+    [busy, initialSnapshot, isDirty, route_id, router]
+  );
+
+  const swipeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+        onPanResponderRelease: (_, gesture) => {
+          if (gesture.dx < -60) goToStore(nextStore);
+          if (gesture.dx > 60) goToStore(previousStore);
+        },
+      }),
+    [goToStore, nextStore, previousStore]
   );
 
   const pickPhoto = async () => {
@@ -326,9 +482,38 @@ export default function AdminStoreEditScreen() {
       </TouchableOpacity>
 
       <Text style={screenStyles.title}>Edit store</Text>
-      <Text style={[screenStyles.subtitle, { marginBottom: 16 }]}>
+      <Text style={[screenStyles.subtitle, { marginBottom: 16 }]}> 
         Name, price, offers, photo, map link, and active status.
       </Text>
+
+      {routeStores.length > 0 && currentIndex >= 0 ? (
+        <View {...swipeResponder.panHandlers} style={styles.storeNavigator}>
+          <TouchableOpacity
+            onPress={() => goToStore(previousStore)}
+            disabled={!previousStore || busy}
+            style={[styles.navButton, (!previousStore || busy) && styles.navButtonDisabled]}
+            accessibilityRole="button"
+            accessibilityLabel="Edit previous store"
+          >
+            <Text style={styles.navButtonText}>← Previous</Text>
+          </TouchableOpacity>
+          <View style={styles.navCenter}>
+            <Text style={styles.navCount}>
+              Store {currentIndex + 1} of {routeStores.length}
+            </Text>
+            <Text style={styles.navHint}>Swipe left or right to switch</Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => goToStore(nextStore)}
+            disabled={!nextStore || busy}
+            style={[styles.navButton, (!nextStore || busy) && styles.navButtonDisabled]}
+            accessibilityRole="button"
+            accessibilityLabel="Edit next store"
+          >
+            <Text style={styles.navButtonText}>Next →</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       <Text style={label}>Store photo</Text>
       {preview ? (
@@ -610,6 +795,50 @@ export default function AdminStoreEditScreen() {
 }
 
 const styles = StyleSheet.create({
+  storeNavigator: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    padding: 8,
+    marginBottom: 18,
+  },
+  navButton: {
+    minWidth: 82,
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: 9,
+    backgroundColor: "rgba(46, 204, 113, 0.12)",
+    alignItems: "center",
+  },
+  navButtonDisabled: {
+    opacity: 0.35,
+  },
+  navButtonText: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  navCenter: {
+    flex: 1,
+    alignItems: "center",
+    paddingHorizontal: 6,
+  },
+  navCount: {
+    color: COLORS.textPrimary,
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  navHint: {
+    color: COLORS.textDisabled,
+    fontSize: 10,
+    marginTop: 3,
+    textAlign: "center",
+  },
   routeHint: {
     color: COLORS.textDisabled,
     fontSize: 12,
