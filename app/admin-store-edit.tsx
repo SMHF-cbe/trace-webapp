@@ -78,7 +78,7 @@ type FormSnapshot = {
 
 export default function AdminStoreEditScreen() {
   const router = useRouter();
-  const { store_id } = useLocalSearchParams<{ store_id?: string; route_id?: string }>();
+  const { store_id, route_id } = useLocalSearchParams<{ store_id?: string; route_id?: string }>();
   const { adminSecret, isAdmin, ready } = useAdminAuth();
   const sid = Number(store_id);
 
