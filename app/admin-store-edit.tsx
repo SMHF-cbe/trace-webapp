@@ -103,6 +103,7 @@ export default function AdminStoreEditScreen() {
   const [locating, setLocating] = useState(false);
   const [routeStores, setRouteStores] = useState<StoreNav[]>([]);
   const [initialSnapshot, setInitialSnapshot] = useState<FormSnapshot | null>(null);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
 
   const currentSnapshot = useMemo<FormSnapshot>(
     () => ({
@@ -147,6 +148,12 @@ export default function AdminStoreEditScreen() {
   useEffect(() => {
     if (ready && !isAdmin) router.replace("/admin-login");
   }, [ready, isAdmin, router]);
+
+  useEffect(() => {
+    if (!saveNotice) return;
+    const timer = setTimeout(() => setSaveNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [saveNotice]);
 
   const hydrate = useCallback((s: StoreDetail) => {
       const nextRouteId = s.route_id == null ? null : Number(s.route_id);
@@ -396,9 +403,7 @@ export default function AdminStoreEditScreen() {
         return;
       }
       hydrate(err as StoreDetail);
-      setPhotoUri(null);
-      Alert.alert("Saved", "Store updated.");
-      router.back();
+      setSaveNotice("Changes saved. Tap this message to dismiss.");
     } catch {
       Alert.alert("Error", "Network problem.");
     } finally {
@@ -485,6 +490,18 @@ export default function AdminStoreEditScreen() {
       <Text style={[screenStyles.subtitle, { marginBottom: 16 }]}> 
         Name, price, offers, photo, map link, and active status.
       </Text>
+
+      {saveNotice ? (
+        <TouchableOpacity
+          onPress={() => setSaveNotice(null)}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss saved confirmation"
+          style={styles.saveNotice}
+        >
+          <Text style={styles.saveNoticeText}>✓ {saveNotice}</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {routeStores.length > 0 && currentIndex >= 0 ? (
         <View {...swipeResponder.panHandlers} style={styles.storeNavigator}>
@@ -795,6 +812,21 @@ export default function AdminStoreEditScreen() {
 }
 
 const styles = StyleSheet.create({
+  saveNotice: {
+    backgroundColor: "rgba(46, 204, 113, 0.14)",
+    borderColor: "rgba(46, 204, 113, 0.55)",
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 13,
+    marginBottom: 12,
+  },
+  saveNoticeText: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center",
+  },
   storeNavigator: {
     flexDirection: "row",
     alignItems: "center",
