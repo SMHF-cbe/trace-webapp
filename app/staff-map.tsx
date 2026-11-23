@@ -28,7 +28,9 @@ export default function StaffMapScreen() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/stores/${routeId}?include_inactive=true`, { cache: "no-store" });
+      const res = await fetch(`${API_BASE}/staff/map/stores/${routeId}?include_inactive=true`, {
+        cache: "no-store",
+      });
       const data = await res.json();
       if (!res.ok || !Array.isArray(data)) {
         setError("Could not load stores for this route.");
