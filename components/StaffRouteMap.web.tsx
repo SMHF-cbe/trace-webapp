@@ -371,3 +371,4 @@ function escapeHtml(value: string): string {
     return entities[character] ?? character;
   });
 }
+ 
