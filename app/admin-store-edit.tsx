@@ -340,36 +340,32 @@ export default function AdminStoreEditScreen() {
   setLocating(true);
 
   try {
-const coordinates = await getFreshCoordinates();
+    const coordinates = await getFreshCoordinates();
 
-const locationUrl = makeGoogleMapsUrl(
-  coordinates.latitude,
-  coordinates.longitude
-);
+    const lat = coordinates.latitude.toFixed(6);
+    const lon = coordinates.longitude.toFixed(6);
 
-setLocationUrl(locationUrl);
+    const locationUrl =
+      "https://maps.google.com/?q=" + lat + "," + lon;
 
-Alert.alert(
-  "Location added",
-  "New location captured:\n" +
-    coordinates.latitude.toFixed(6) +
-    ", " +
-    coordinates.longitude.toFixed(6)
-);
+    setLocationUrl(locationUrl);
 
-
+    Alert.alert(
+      "Location added",
+      "New location captured:\n" + lat + ", " + lon
     );
   } catch (error) {
-    Alert.alert(
-      "Location error",
+    const message =
       error instanceof Error
         ? error.message
-        : "Could not fetch your current location."
-    );
+        : "Could not fetch your current location.";
+
+    Alert.alert("Location error", message);
   } finally {
     setLocating(false);
   }
 };
+
 
 
   const save = async () => {
