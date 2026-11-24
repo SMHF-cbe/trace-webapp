@@ -19,6 +19,7 @@ import { API_BASE, mediaUrl } from "../constants/config";
 import { screenStyles, placeholderColor } from "../constants/screenStyles";
 import { Screen } from "../components/Screen";
 import { useAdminAuth, adminSecretHeaders } from "../context/AdminAuthContext";
+import { getFreshCoordinates } from "../constants/currentLocation";
 
 const OFFER_LABELS: Record<string, string> = {
   none: "None",
@@ -333,26 +334,34 @@ export default function AdminStoreEditScreen() {
   };
 
   const useCurrentLocation = async () => {
-    setLocating(true);
-    try {
-      const perm = await Location.requestForegroundPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert("Permission required", "Allow location permission to autofill map link.");
-        return;
-      }
-      const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      const lat = pos.coords.latitude.toFixed(6);
-      const lon = pos.coords.longitude.toFixed(6);
-      setLocationUrl(`https://maps.google.com/?q=${lat},${lon}`);
-      Alert.alert("Location added", "Current location has been set as a map link.");
-    } catch {
-      Alert.alert("Location error", "Could not fetch your current location.");
-    } finally {
-      setLocating(false);
-    }
-  };
+  if (locating || busy) return;
+
+  setLocating(true);
+
+  try {
+    const coordinates = await getFreshCoordinates();
+
+    const lat = coordinates.latitude.toFixed(6);
+    const lon = coordinates.longitude.toFixed(6);
+
+    setLocationUrl(`https://maps.google.com/?q=<LaTex>{lat},</LaTex>{lon}`);
+
+    Alert.alert(
+      "Location added",
+      `New location captured:\n<LaTex>{lat},</LaTex>{lon}`
+    );
+  } catch (error) {
+    Alert.alert(
+      "Location error",
+      error instanceof Error
+        ? error.message
+        : "Could not fetch your current location."
+    );
+  } finally {
+    setLocating(false);
+  }
+};
+
 
   const save = async () => {
     if (!name.trim() || !price.trim()) {
