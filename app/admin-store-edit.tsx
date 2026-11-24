@@ -341,14 +341,16 @@ export default function AdminStoreEditScreen() {
   try {
     const coordinates = await getFreshCoordinates();
 
-    const lat = coordinates.latitude.toFixed(6);
-    const lon = coordinates.longitude.toFixed(6);
+const lat = coordinates.latitude.toFixed(6);
+const lon = coordinates.longitude.toFixed(6);
 
-    setLocationUrl(`https://maps.google.com/?q=<LaTex>{lat},</LaTex>{lon}`);
+setLocationUrl("https://maps.google.com/?q=" + lat + "," + lon);
 
-    Alert.alert(
-      "Location added",
-      `New location captured:\n<LaTex>{lat},</LaTex>{lon}`
+Alert.alert(
+  "Location added",
+  "New location captured:\n" + lat + ", " + lon
+);
+
     );
   } catch (error) {
     Alert.alert(
