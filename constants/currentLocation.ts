@@ -13,15 +13,29 @@ export async function getFreshCoordinates(): Promise<FreshCoordinates> {
     navigator.geolocation
   ) {
     return new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(
+      let settled = false;
+      let watchId: number | null = null;
+
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+        callback();
+      };
+
+      watchId = navigator.geolocation.watchPosition(
         (position) => {
-          resolve({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          });
+          finish(() =>
+            resolve({
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            })
+          );
         },
         (error) => {
-          reject(new Error(error.message || "Unable to read browser location."));
+          finish(() =>
+            reject(new Error(error.message || "Unable to read browser location."))
+          );
         },
         {
           enableHighAccuracy: true,
