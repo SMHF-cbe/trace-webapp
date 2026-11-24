@@ -20,6 +20,7 @@ import { screenStyles, placeholderColor } from "../constants/screenStyles";
 import { Screen } from "../components/Screen";
 import { useAdminAuth, adminSecretHeaders } from "../context/AdminAuthContext";
 import { getFreshCoordinates } from "../constants/currentLocation";
+import { makeGoogleMapsUrl } from "../constants/googleMaps";
 
 const OFFER_LABELS: Record<string, string> = {
   none: "None",
@@ -339,17 +340,23 @@ export default function AdminStoreEditScreen() {
   setLocating(true);
 
   try {
-    const coordinates = await getFreshCoordinates();
+const coordinates = await getFreshCoordinates();
 
-const lat = coordinates.latitude.toFixed(6);
-const lon = coordinates.longitude.toFixed(6);
+const locationUrl = makeGoogleMapsUrl(
+  coordinates.latitude,
+  coordinates.longitude
+);
 
-setLocationUrl("https://maps.google.com/?q=" + lat + "," + lon);
+setLocationUrl(locationUrl);
 
 Alert.alert(
   "Location added",
-  "New location captured:\n" + lat + ", " + lon
+  "New location captured:\n" +
+    coordinates.latitude.toFixed(6) +
+    ", " +
+    coordinates.longitude.toFixed(6)
 );
+
 
     );
   } catch (error) {
