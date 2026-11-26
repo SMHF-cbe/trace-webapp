@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { API_BASE } from "../constants/config";
 
 export type MapStore = {
   id: number;
@@ -15,6 +16,7 @@ export type MapStore = {
 type Props = {
   stores: MapStore[];
   nextStoreId: number | null;
+  routeId: number | null;
 };
 
 type Position = {
@@ -51,26 +53,35 @@ function distanceKm(from: Position, to: Position): number {
   return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-export function StaffRouteMap({ stores, nextStoreId }: Props) {
+export function StaffRouteMap({ stores, nextStoreId, routeId }: Props) {
   const mapElement = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const pinsRef = useRef<L.LayerGroup | null>(null);
+  const routeLineRef = useRef<L.Polyline | null>(null);
   const markerRefs = useRef<Map<number, L.CircleMarker>>(new Map());
   const [locationState, setLocationState] = useState("Requesting location…");
   const [locationError, setLocationError] = useState<string | null>(null);
   const [currentPosition, setCurrentPosition] = useState<Position | null>(null);
+  const [routeState, setRouteState] = useState("Loading road route…");
 
   const mappedStores = useMemo(
     () =>
       stores.filter(
         (store) =>
+          store.is_active !== false &&
           validCoordinate(store.latitude, -90, 90) &&
           validCoordinate(store.longitude, -180, 180)
       ),
     [stores]
   );
 
-  const missingCount = Math.max(0, stores.length - mappedStores.length);
+  const routeKey = useMemo(
+    () => mappedStores.map((store) => `${store.id}:${store.latitude}:${store.longitude}`).join("|"),
+    [mappedStores]
+  );
+
+  const activeStoreCount = stores.filter((store) => store.is_active !== false).length;
+  const missingCount = Math.max(0, activeStoreCount - mappedStores.length);
 
   const nearbyStores = useMemo(() => {
     const ordered = mappedStores.map((store) => ({
@@ -96,8 +107,9 @@ export function StaffRouteMap({ stores, nextStoreId }: Props) {
     if (!mapElement.current || mapRef.current) return;
 
     const map = L.map(mapElement.current, { zoomControl: true });
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
       maxZoom: 19,
     }).addTo(map);
     mapRef.current = map;
@@ -108,6 +120,7 @@ export function StaffRouteMap({ stores, nextStoreId }: Props) {
       map.remove();
       mapRef.current = null;
       pinsRef.current = null;
+      routeLineRef.current = null;
       markerRefs.current.clear();
     };
   }, []);
@@ -151,6 +164,65 @@ export function StaffRouteMap({ stores, nextStoreId }: Props) {
       map.fitBounds(L.latLngBounds(bounds), { padding: [40, 40], maxZoom: 15 });
     }
   }, [mappedStores, nextStoreId]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (routeLineRef.current) {
+      if (map) routeLineRef.current.removeFrom(map);
+      else routeLineRef.current.remove();
+      routeLineRef.current = null;
+    }
+
+    if (!map || !routeId || mappedStores.length < 2) {
+      setRouteState(mappedStores.length < 2 ? "Not enough mapped active stores for a road route" : "Road route unavailable");
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setRouteState("Loading road route…");
+      const params = new URLSearchParams();
+      if (currentPosition) {
+        params.set("start_lat", String(currentPosition.latitude));
+        params.set("start_lng", String(currentPosition.longitude));
+      }
+
+      try {
+        const response = await fetch(
+          `${API_BASE}/staff/map/route/${routeId}?${params.toString()}`,
+          { signal: controller.signal, cache: "no-store" }
+        );
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.road_route || !Array.isArray(data.coordinates) || data.coordinates.length < 2) {
+          throw new Error(data?.detail || data?.message || "Road route unavailable");
+        }
+
+        if (controller.signal.aborted || !mapRef.current) return;
+        const line = L.polyline(data.coordinates as L.LatLngExpression[], {
+          color: COLORS.current,
+          weight: 5,
+          opacity: 0.82,
+          lineCap: "round",
+          lineJoin: "round",
+        }).addTo(mapRef.current);
+        routeLineRef.current = line;
+        setRouteState(
+          data.distance_meters
+            ? `Road route · ${(Number(data.distance_meters) / 1000).toFixed(1)} km`
+            : "Road route ready"
+        );
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setRouteState(error instanceof Error ? error.message : "Road route unavailable");
+        }
+      }
+    }, currentPosition ? 700 : 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [currentPosition, mappedStores.length, routeId, routeKey]);
 
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -243,8 +315,9 @@ export function StaffRouteMap({ stores, nextStoreId }: Props) {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <b>{mappedStores.length} of {stores.length} stores mapped</b>
+          <b>{mappedStores.length} of {activeStoreCount} active stores mapped</b>
           {missingCount > 0 ? <span style={{ color: "#FCD34D" }}>({missingCount} missing location)</span> : null}
+          <span style={{ color: "#BFDBFE" }}>{routeState}</span>
           <button type="button" onClick={focusNext} disabled={!mappedStores.some((store) => store.id === nextStoreId)} style={buttonStyle}>
             Focus next store
           </button>
@@ -371,4 +444,3 @@ function escapeHtml(value: string): string {
     return entities[character] ?? character;
   });
 }
- 
