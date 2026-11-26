@@ -15,6 +15,7 @@ export type MapStore = {
 type Props = {
   stores: MapStore[];
   nextStoreId: number | null;
+  routeId?: number | null;
 };
 
 type Position = {
@@ -64,6 +65,7 @@ export function StaffRouteMap({ stores, nextStoreId }: Props) {
     () =>
       stores.filter(
         (store) =>
+          store.is_active !== false &&
           validCoordinate(store.latitude, -90, 90) &&
           validCoordinate(store.longitude, -180, 180)
       ),
