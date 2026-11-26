@@ -112,7 +112,7 @@ export default function StaffMapScreen() {
           </View>
         ) : (
           <View style={{ flex: 1 }}>
-            <StaffRouteMap stores={stores} nextStoreId={nextStore?.id ?? null} />
+            <StaffRouteMap stores={stores} nextStoreId={nextStore?.id ?? null} routeId={routeId} />
           </View>
         )}
       </View>
